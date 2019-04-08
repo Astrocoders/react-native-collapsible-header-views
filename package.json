@@ -7,7 +7,7 @@
   "scripts": {
     "preversion": "npm run build",
     "postversion": "git push && git push --tags",
-    "postinstall": "npm run build",
+    "postinstall": "npm install && npm run build",
     "build": "rm -rf dist && mkdir dist && cp src/index.d.ts dist/index.d.ts && tsc -p src",
     "lint": "tslint -p src && tslint -p CollapsibleHeaderViewsExample",
     "watch": "npm run build -- --watch"
