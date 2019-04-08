@@ -7,10 +7,12 @@ import {
   Animated,
   NativeSyntheticEvent,
   NativeScrollEvent,
-  ViewStyle
+  ViewStyle,
 } from 'react-native'
 
-const noop = () => { /**/ }
+const noop = () => {
+  /**/
+}
 
 export type AnimationConfig = { animated?: boolean }
 
@@ -21,45 +23,54 @@ export type CollapsibleHeaderProps = {
 }
 
 export type CollapsibleHeaderViewProps<T extends ScrollViewProps> = T & {
-  readonly CollapsibleHeaderComponent: React.ReactElement<unknown>
+  readonly CollapsibleHeaderComponent:
+    | React.ReactElement<unknown>
+    | React.ComponentType<CollapsibleHeaderProps>
+  readonly CollapsibleFooterComponent:
+    | React.ReactElement<unknown>
     | React.ComponentType<CollapsibleHeaderProps>
   readonly headerHeight: number
   readonly statusBarHeight: number
+  readonly footerHeight: number
   readonly headerContainerBackgroundColor: string
   readonly disableHeaderSnap: boolean
   readonly headerAnimationDuration: number
+  readonly keepHidden: boolean
 }
 
 interface CollapsibleHeaderViewStyle {
   readonly fill: ViewStyle
   readonly header: ViewStyle
+  readonly footer: ViewStyle
   readonly container: ViewStyle
 }
 
 export const withCollapsibleHeader = <T extends ScrollViewProps>(
-  Component: React.ComponentClass<T>
+  Component: React.ComponentClass<T>,
 ) => {
-  const AnimatedComponent =
-    Animated.createAnimatedComponent(Component) as React.ComponentClass<ScrollViewProps>
+  const AnimatedComponent = Animated.createAnimatedComponent(Component) as React.ComponentClass<
+    ScrollViewProps
+  >
 
   return class CollapsibleHeaderView extends React.Component<CollapsibleHeaderViewProps<T>> {
-
     static defaultProps = {
       statusBarHeight: 0,
       disableHeaderMomentum: false,
       headerMomentumDuration: 350,
-      headerContainerBackgroundColor: 'white'
+      headerContainerBackgroundColor: 'white',
     }
 
     private scrollAnim = new Animated.Value(0)
     private offsetAnim = new Animated.Value(0)
     private clampedScroll?: Animated.AnimatedDiffClamp
+    private clampedScrollFooter?: Animated.AnimatedDiffClamp
     private scrollValue = 0
     private offsetValue = 0
     private clampedScrollValue = 0
     private scrollEndTimer = 0
     private headerSnap?: Animated.CompositeAnimation
     private headerTranslation?: Animated.AnimatedInterpolation
+    private footerTranslation?: Animated.AnimatedInterpolation
     private currentHeaderHeight?: number
     private currentStatusBarHeight?: number
     private wrappedComponent: React.RefObject<any> = React.createRef()
@@ -67,18 +78,22 @@ export const withCollapsibleHeader = <T extends ScrollViewProps>(
     public constructor(props: CollapsibleHeaderViewProps<T>) {
       super(props)
 
-      const { headerHeight, statusBarHeight } = props
+      const { headerHeight, statusBarHeight, footerHeight, keepHidden } = props
 
-      this.initAnimations(headerHeight, statusBarHeight)
+      this.initAnimations(headerHeight, statusBarHeight, footerHeight)
+
+      if (keepHidden) {
+        this.moveHeader(headerHeight, false)
+      }
     }
 
-    private initAnimations(headerHeight: number, statusBarHeight: number) {
+    private initAnimations(headerHeight: number, statusBarHeight: number, footerHeight: number) {
       this.scrollAnim.addListener(({ value }) => {
         const diff = value - this.scrollValue
         this.scrollValue = value
         this.clampedScrollValue = Math.min(
           Math.max(this.clampedScrollValue + diff, 0),
-          headerHeight - statusBarHeight
+          headerHeight - statusBarHeight,
         )
       })
 
@@ -91,19 +106,41 @@ export const withCollapsibleHeader = <T extends ScrollViewProps>(
           this.scrollAnim.interpolate({
             inputRange: [0, 1],
             outputRange: [0, 1],
-            extrapolateLeft: 'clamp'
+            extrapolateLeft: 'clamp',
           }),
-          this.offsetAnim
+          this.offsetAnim,
         ),
         0,
-        headerHeight - statusBarHeight
+        headerHeight - statusBarHeight,
+      )
+
+      this.clampedScrollFooter = Animated.diffClamp(
+        Animated.add(
+          this.scrollAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, 1],
+            extrapolateLeft: 'clamp',
+          }),
+          this.offsetAnim,
+        ),
+        0,
+        footerHeight,
       )
 
       this.headerTranslation = this.clampedScroll.interpolate({
         inputRange: [0, headerHeight - statusBarHeight],
         outputRange: [0, -(headerHeight - statusBarHeight)],
-        extrapolate: 'clamp'
+        extrapolate: 'clamp',
       })
+
+      this.footerTranslation = Animated.add(
+        this.clampedScrollFooter.interpolate({
+          inputRange: [0, footerHeight],
+          outputRange: [-footerHeight, 0],
+          extrapolate: 'clamp',
+        }),
+        footerHeight,
+      )
 
       this.currentHeaderHeight = headerHeight
       this.currentStatusBarHeight = statusBarHeight
@@ -119,12 +156,13 @@ export const withCollapsibleHeader = <T extends ScrollViewProps>(
       }
     }
 
-    private resetAnimations(headerHeight: number, statusBarHeight: number) {
-      if (this.currentHeaderHeight !== headerHeight ||
+    private resetAnimations(headerHeight: number, statusBarHeight: number, footerHeight: number) {
+      if (
+        this.currentHeaderHeight !== headerHeight ||
         this.currentStatusBarHeight !== statusBarHeight
       ) {
         this.cleanupAnimations()
-        this.initAnimations(headerHeight, statusBarHeight)
+        this.initAnimations(headerHeight, statusBarHeight, footerHeight)
       }
     }
 
@@ -132,26 +170,51 @@ export const withCollapsibleHeader = <T extends ScrollViewProps>(
       this.cleanupAnimations()
     }
 
+    public componentDidUpdate(prevProps: CollapsibleHeaderViewProps<any>) {
+      if (prevProps.keepHidden && !this.props.keepHidden) {
+        this.moveHeader(-this.props.headerHeight, true)
+      }
+
+      if (!prevProps.keepHidden && this.props.keepHidden) {
+        this.moveHeader(this.props.headerHeight, true)
+      }
+    }
+
     public render() {
       const {
         statusBarHeight,
         CollapsibleHeaderComponent,
+        CollapsibleFooterComponent,
         contentContainerStyle,
         headerHeight,
+        footerHeight,
         onScroll,
         headerContainerBackgroundColor,
+        keepHidden,
         ...props
       } = this.props as CollapsibleHeaderViewProps<ScrollViewProps>
 
-      this.resetAnimations(headerHeight, statusBarHeight)
+      this.resetAnimations(headerHeight, statusBarHeight, footerHeight)
 
       const headerProps = {
         interpolatedHeaderTranslation: this.interpolatedHeaderTranslation,
         showHeader: this.showHeader,
-        hideHeader: this.hideHeader
+        hideHeader: this.hideHeader,
       }
+      const scrollProps = keepHidden
+        ? {}
+        : {
+            onMomentumScrollBegin: this.onMomentumScrollBegin,
+            onMomentumScrollEnd: this.onMomentumScrollEnd,
+            onScrollEndDrag: this.onScrollEndDrag,
+            onScroll: Animated.event([{ nativeEvent: { contentOffset: { y: this.scrollAnim } } }], {
+              useNativeDriver: true,
+              listener: onScroll,
+            }),
+          }
 
       const Header = CollapsibleHeaderComponent as React.ComponentType<CollapsibleHeaderProps>
+      const Footer = CollapsibleFooterComponent as React.ComponentType<CollapsibleHeaderProps>
 
       const styles = style(headerHeight, statusBarHeight, headerContainerBackgroundColor)
 
@@ -164,18 +227,17 @@ export const withCollapsibleHeader = <T extends ScrollViewProps>(
             {...props}
             ref={this.wrappedComponent}
             contentContainerStyle={[contentContainerStyle, styles.container]}
-            onMomentumScrollBegin={this.onMomentumScrollBegin}
-            onMomentumScrollEnd={this.onMomentumScrollEnd}
-            onScrollEndDrag={this.onScrollEndDrag}
-            onScroll={Animated.event(
-              [{ nativeEvent: { contentOffset: { y: this.scrollAnim } } }],
-              { useNativeDriver: true, listener: onScroll }
-            )}
+            {...scrollProps}
           />
           <Animated.View
             style={[styles.header, [{ transform: [{ translateY: this.headerTranslation }] }]]}
           >
             {React.isValidElement(Header) ? Header : <Header {...headerProps} />}
+          </Animated.View>
+          <Animated.View
+            style={[styles.footer, [{ transform: [{ translateY: this.footerTranslation }] }]]}
+          >
+            {React.isValidElement(Footer) ? Footer : null}
           </Animated.View>
         </View>
       )
@@ -206,15 +268,15 @@ export const withCollapsibleHeader = <T extends ScrollViewProps>(
         statusBarHeight,
         onMomentumScrollEnd = noop,
         headerHeight,
-        disableHeaderSnap
+        disableHeaderSnap,
       } = this.props
 
       if (!disableHeaderSnap) {
         this.moveHeader(
-          (this.scrollValue > headerHeight &&
-          this.clampedScrollValue > (headerHeight - statusBarHeight) / 2)
+          this.scrollValue > headerHeight &&
+            this.clampedScrollValue > (headerHeight - statusBarHeight) / 2
             ? this.offsetValue + headerHeight
-            : this.offsetValue - headerHeight
+            : this.offsetValue - headerHeight,
         )
       }
 
@@ -227,7 +289,7 @@ export const withCollapsibleHeader = <T extends ScrollViewProps>(
       return this.clampedScroll!.interpolate({
         inputRange: [0, headerHeight - statusBarHeight],
         outputRange: [from, to],
-        extrapolate: 'clamp'
+        extrapolate: 'clamp',
       })
     }
 
@@ -242,7 +304,7 @@ export const withCollapsibleHeader = <T extends ScrollViewProps>(
     public showHeader = (options: AnimationConfig | unknown) => {
       this.moveHeader(
         this.offsetValue - this.props.headerHeight,
-        !CollapsibleHeaderView.isAnimationConfig(options) || (options as AnimationConfig).animated
+        !CollapsibleHeaderView.isAnimationConfig(options) || (options as AnimationConfig).animated,
       )
     }
 
@@ -251,7 +313,7 @@ export const withCollapsibleHeader = <T extends ScrollViewProps>(
 
       this.moveHeader(
         this.offsetValue + (this.scrollValue > headerHeight ? headerHeight : this.scrollValue),
-        !CollapsibleHeaderView.isAnimationConfig(options) || (options as AnimationConfig).animated
+        !CollapsibleHeaderView.isAnimationConfig(options) || (options as AnimationConfig).animated,
       )
     }
 
@@ -264,11 +326,10 @@ export const withCollapsibleHeader = <T extends ScrollViewProps>(
         this.headerSnap = Animated.timing(this.offsetAnim, {
           toValue,
           duration: this.props.headerAnimationDuration,
-          useNativeDriver: true
+          useNativeDriver: true,
         })
 
         this.headerSnap.start()
-
       } else {
         this.offsetAnim.setValue(toValue)
       }
@@ -280,7 +341,7 @@ const style = memoize(
   (headerHeight: number, statusBarHeight: number, headerBackgroundColor: string) =>
     StyleSheet.create<CollapsibleHeaderViewStyle>({
       fill: {
-        flex: 1
+        flex: 1,
       },
       header: {
         position: 'absolute',
@@ -289,11 +350,16 @@ const style = memoize(
         right: 0,
         height: headerHeight,
         paddingTop: statusBarHeight,
-        backgroundColor: headerBackgroundColor
+        backgroundColor: headerBackgroundColor,
+      },
+      footer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
       },
       container: {
-        paddingTop: headerHeight
-      }
-    }
-  )
+        paddingTop: headerHeight,
+      },
+    }),
 )
